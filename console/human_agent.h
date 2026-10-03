@@ -16,6 +16,10 @@ public:
 private:
     static const char *promptFor(Kind K);
 
+    static void listSpecials(const Move *Legal, int Count, const Sim &S, int p);
+
+    static Move askSpecial(const Move *Legal, int Count, Kind Special);
+
     static string whyNot(const World &W, const Sim &S, int p, Kind K, int s);
 
     // Returns the chosen slot (0-9), or -1 to go back and pick another state.

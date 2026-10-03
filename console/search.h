@@ -4,7 +4,7 @@
 
 // Bot search: expectiminimax with alpha-beta, iterative deepening and a time budget.
 //   * max nodes for the bot, min nodes for the opponent (assumed to play well),
-//   * chance nodes for campaign answers (bot: its own accuracy, opponent: the learned estimate),
+//   * chance nodes for campaign answers (bot: its own accuracy, opponent: the learned estimate) and scandal leaks (fixed odds),
 //   * polls are searched as their expected outcome (a 50/50 split),
 //   * moves are ordered by moveGain() and only the best few are searched below the root (beam),
 //   * forced moves (only "pass" available) do not consume depth.
@@ -46,13 +46,13 @@ private:
     bool Aborted = false;
     bool CutByDepth = false;
 
-    static int beamWidth(int Ply) { return Ply == 0 ? MaxMoves : (Ply == 1 ? 10 : (Ply == 2 ? 7 : 5)); }
+    static int beamWidth(int Ply) { return Ply == 0 ? 40 : (Ply == 1 ? 10 : (Ply == 2 ? 7 : 5)); }
 
     double leaf(const Sim &S) const;
 
     double child(const Sim &S, int p, const Move &M, bool Correct, int Depth, int Ply, double Alpha, double Beta);
 
-    // Value of making move M: a plain child for deterministic moves, a chance node (quiz answer) for campaigns.
+    // Value of making move M: a plain child for deterministic moves, a chance node (quiz answer or scandal) otherwise.
     // The chance node uses Star1 pruning: the window passed to each outcome assumes the others are as good or as
     // bad as the value bounds allow.
     double valueMove(const Sim &S, int p, const Move &M, int Depth, int Ply, double Alpha, double Beta);

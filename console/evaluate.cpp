@@ -1,9 +1,10 @@
 #include "evaluate.h"
 
 constexpr double SoftMomentum = 0.12; // win probability per point of momentum lead, early in the game
-constexpr double SoftPercent = 0.20;  // win probability bonus for a big percentage lead
+constexpr double SoftPercent = 0.30;  // win probability bonus for a big percentage lead
 constexpr double FundValue = 4.0;     // worth of one spendable fund, in electoral votes
 constexpr double ClaimValue = 1.5;    // worth of leading a state that is holding a fund
+constexpr double SpecialValue = 2.5;  // worth of one unused special action while enough turns remain to play it
 
 double stateTerm(const StateInfo &Si, const StateDyn &D, int TurnsLeft)
 {
@@ -15,7 +16,8 @@ double stateTerm(const StateInfo &Si, const StateDyn &D, int TurnsLeft)
     }
 
     const int MomDiff = D.Mom[0] - D.Mom[1];
-    const double Final = MomDiff > 0 ? 1.0 : (MomDiff < 0 ? 0.0 : 0.5); // how finalizeGame would decide it
+    const double ByMomentum = MomDiff > 0 ? 1.0 : (MomDiff < 0 ? 0.0 : 0.5);
+    const double Final = D.Pct[0] != D.Pct[1] ? (D.Pct[0] > D.Pct[1] ? 1.0 : 0.0) : ByMomentum; // how finalizeGame would decide it
 
     if (TurnsLeft <= 0)
     {
@@ -37,10 +39,24 @@ double fundsTerm(int Funds0, int Funds1, int TurnsLeft)
     return FundValue * (min(Funds0, Cap) - min(Funds1, Cap));
 }
 
+static double specialWeight(int TurnsLeft) { return SpecialValue * min(1.0, TurnsLeft / 5.0); }
+
+static int usesLeft(const Sim &S, int p)
+{
+    int Total = 0;
+
+    for (int k = 0; k < SpecialKinds; k++)
+    {
+        Total += S.SpecialLeft[p][k];
+    }
+
+    return Total;
+}
+
 double marginOf(const World &W, const Sim &S)
 {
     const int TurnsLeft = TotalTurns - S.Turn;
-    double Total = fundsTerm(S.Funds[0], S.Funds[1], TurnsLeft);
+    double Total = fundsTerm(S.Funds[0], S.Funds[1], TurnsLeft) + specialWeight(TurnsLeft) * (usesLeft(S, 0) - usesLeft(S, 1));
 
     for (int s = 0; s < NumStates; s++)
     {
@@ -50,7 +66,7 @@ double marginOf(const World &W, const Sim &S)
     return Total;
 }
 
-double moveGain(const World &W, const Sim &S, int p, const Move &M, double PCorrect)
+double moveGain(const World &W, const Sim &S, int p, const Move &M, double PChance)
 {
     if (M.K == Pass)
     {
@@ -58,35 +74,57 @@ double moveGain(const World &W, const Sim &S, int p, const Move &M, double PCorr
     }
 
     const int TurnsLeft = TotalTurns - S.Turn;
-    const StateInfo &Si = W.States[M.State];
-    const StateDyn &D = S.St[M.State];
     int Funds[2] = {S.Funds[0], S.Funds[1]};
-    double After;
+    double Before = 0, After = 0;
+    int Used = 0;
 
-    if (M.K == Poll)
+    if (M.State >= 0)
     {
-        StateDyn N = D;
-        N.Pct[0] = N.Pct[1] = 50;
-        After = stateTerm(Si, N, TurnsLeft);
-        Funds[p]--;
-    }
-    else if (M.K == TakeFunds)
-    {
-        StateDyn N = D;
-        N.Funds = 0;
-        After = stateTerm(Si, N, TurnsLeft);
-        Funds[p] += D.Funds;
+        const StateInfo &Si = W.States[M.State];
+        const StateDyn &D = S.St[M.State];
+        StateDyn Good = D, Bad = D;
+        Before = stateTerm(Si, D, TurnsLeft);
+        After = Before;
+
+        switch (M.K)
+        {
+        case Poll:
+            Good.Pct[0] = Good.Pct[1] = 50;
+            After = stateTerm(Si, Good, TurnsLeft);
+            Funds[p]--;
+            break;
+        case TakeFunds:
+            Good.Funds = 0;
+            After = stateTerm(Si, Good, TurnsLeft);
+            Funds[p] += D.Funds;
+            break;
+        case Public:
+        case Advert:
+            boost(Good, p, gainOf(M.K));
+            boost(Bad, 1 - p, gainOf(M.K));
+            After = PChance * stateTerm(Si, Good, TurnsLeft) + (1 - PChance) * stateTerm(Si, Bad, TurnsLeft);
+            Funds[p]--;
+            break;
+        case Celebrity:
+            boost(Good, p, gainOf(Celebrity));
+            After = stateTerm(Si, Good, TurnsLeft);
+            Funds[p] -= specialCost(Celebrity);
+            Used = 1;
+            break;
+        default:
+            drain(Good, 1 - p);
+            drain(Bad, p);
+            After = ScandalChance * stateTerm(Si, Good, TurnsLeft) + (1 - ScandalChance) * stateTerm(Si, Bad, TurnsLeft);
+            Funds[p] -= specialCost(Scandal);
+            Used = 1;
+        }
     }
     else
     {
-        const int Gain = M.K == Public ? 2 : 1;
-        StateDyn Good = D, Bad = D;
-        boost(Good, p, Gain);
-        boost(Bad, 1 - p, Gain);
-        After = PCorrect * stateTerm(Si, Good, TurnsLeft) + (1 - PCorrect) * stateTerm(Si, Bad, TurnsLeft);
-        Funds[p]--;
+        Funds[p] += FundraiserGain;
+        Used = 1;
     }
 
-    const double Delta = After - stateTerm(Si, D, TurnsLeft) + fundsTerm(Funds[0], Funds[1], TurnsLeft) - fundsTerm(S.Funds[0], S.Funds[1], TurnsLeft);
+    const double Delta = After - Before + fundsTerm(Funds[0], Funds[1], TurnsLeft) - fundsTerm(S.Funds[0], S.Funds[1], TurnsLeft) - (p == 0 ? Used : -Used) * specialWeight(TurnsLeft);
     return p == 0 ? Delta : -Delta;
 }

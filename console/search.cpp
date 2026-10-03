@@ -8,7 +8,8 @@ SearchResult Searcher::think(const Sim &S, int MaxDepth, int TimeMs)
 {
     SearchResult R;
     ScoredMove List[MaxMoves];
-    const int n = rank(S, List);
+    int n = rank(S, List);
+    n = min(n, beamWidth(0));
     const int p = moverOf(S);
     const Clock::time_point Start = Clock::now();
 
@@ -102,12 +103,14 @@ double Searcher::child(const Sim &S, int p, const Move &M, bool Correct, int Dep
 
 double Searcher::valueMove(const Sim &S, int p, const Move &M, int Depth, int Ply, double Alpha, double Beta)
 {
-    if (M.K != Public && M.K != Advert)
+    const double W0 = chanceOf(M.K, p == Me ? PMe : POpp);
+
+    if (W0 < 0)
     {
         return child(S, p, M, true, Depth, Ply, Alpha, Beta);
     }
 
-    const double W0 = p == Me ? PMe : POpp, W1 = 1 - W0;
+    const double W1 = 1 - W0;
     const double A0 = (Alpha - W1 * ValueBound) / W0, B0 = (Beta + W1 * ValueBound) / W0;
     const double V0 = child(S, p, M, true, Depth, Ply, max(A0, -ValueBound), min(B0, ValueBound));
 

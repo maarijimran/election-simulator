@@ -81,6 +81,7 @@ void Game::setupWorld()
     assignStateIssues(W);
     computeUsable(W);
     S = Sim();
+    S.Offset = static_cast<int8_t>(Rng() & 1);
 
     for (int s = 0; s < NumStates; s++)
     {
@@ -96,11 +97,16 @@ void Game::setupWorld()
 
 void Game::play()
 {
+    if (Verbose)
+    {
+        cout << "Coin toss : " << W.PlayerName[firstMover(S)] << " acts first." << endl;
+    }
+
     while (!terminal(S))
     {
-        const int Step = S.Step, p = Step & 1;
+        const int Step = S.Step, p = moverOf(S);
 
-        if (Verbose && p == 0)
+        if (Verbose && (Step & 1) == 0)
         {
             announcePhase(kindOfStep(Step));
         }
@@ -194,6 +200,7 @@ void Game::announcePhase(Kind K) const
     }
 
     cout << "||*****|| " << Titles[S.Step / 2] << " ||*****||" << endl;
+    cout << W.PlayerName[firstMover(S)] << " acts first in this phase." << endl;
 }
 
 void Game::execute(int p, const Move &M)
@@ -203,23 +210,23 @@ void Game::execute(int p, const Move &M)
     int Roll = 50;
     int Gained = 0;
 
-    if (M.K != Pass)
+    if (M.K == Poll)
+    {
+        Roll = 49 + static_cast<int>(Rng() % 3);
+    }
+    else if (M.K == TakeFunds)
+    {
+        Gained = S.St[M.State].Funds;
+    }
+    else if (isCampaign(M.K))
     {
         const StateInfo &Si = W.States[M.State];
-
-        if (M.K == Poll)
-        {
-            Roll = 49 + static_cast<int>(Rng() % 3);
-        }
-        else if (M.K == TakeFunds)
-        {
-            Gained = S.St[M.State].Funds;
-        }
-        else
-        {
-            Correct = Agents[p]->answer(IssuesArray[issueOfSlot(Si, M.Slot)].Name, questionOfSlot(Si, M.Slot));
-            Stats[p].record(Correct);
-        }
+        Correct = Agents[p]->answer(IssuesArray[issueOfSlot(Si, M.Slot)].Name, questionOfSlot(Si, M.Slot));
+        Stats[p].record(Correct);
+    }
+    else if (M.K == Scandal)
+    {
+        Correct = uniform_real_distribution<double>(0, 1)(Rng) < ScandalChance;
     }
 
     applyMove(S, p, M, Correct, Roll);
@@ -229,8 +236,8 @@ void Game::execute(int p, const Move &M)
         return;
     }
 
-    const char *Name = M.K == Pass ? "" : W.States[M.State].Name;
-    const int Gain = M.K == Public ? 2 : 1;
+    const char *Name = M.State >= 0 ? W.States[M.State].Name : "";
+    const int Gain = gainOf(M.K);
 
     switch (M.K)
     {
@@ -242,6 +249,22 @@ void Game::execute(int p, const Move &M)
         break;
     case TakeFunds:
         cout << Who << " took " << Gained << " fund(s) from " << Name << "." << endl;
+        break;
+    case Celebrity:
+        cout << Who << " landed a celebrity endorsement in " << Name << " : momentum +" << Gain << " for " << Who << endl;
+        break;
+    case Scandal:
+        if (Correct)
+        {
+            cout << Who << " leaked a scandal in " << Name << " : " << W.PlayerName[1 - p] << " loses 2 momentum" << endl;
+        }
+        else
+        {
+            cout << Who << "'s scandal in " << Name << " backfired : " << Who << " loses 2 momentum" << endl;
+        }
+        break;
+    case Fundraiser:
+        cout << Who << " held a fundraiser : +" << FundraiserGain << " funds" << endl;
         break;
     default:
         cout << Who << (M.K == Public ? " campaigned publicly in " : " ran advertisements in ") << Name << " on '" << IssuesArray[issueOfSlot(W.States[M.State], M.Slot)].Name << "' : ";

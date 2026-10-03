@@ -69,13 +69,9 @@ int genMoves(const World &W, const Sim &S, Move *Out, bool Prune)
 {
     const int p = moverOf(S);
     const Kind K = kindOfStep(S.Step);
+    const int Funds = S.Funds[p];
     int n = 0;
     Out[n++] = Move();
-
-    if (K != TakeFunds && S.Funds[p] <= 0)
-    {
-        return n;
-    }
 
     for (int s = 0; s < NumStates; s++)
     {
@@ -86,29 +82,43 @@ int genMoves(const World &W, const Sim &S, Move *Out, bool Prune)
             continue;
         }
 
-        if (K == Poll)
+        if (K == TakeFunds)
         {
-            if (Prune && D.Pct[0] == 50 && D.Pct[1] == 50)
+            if (D.Funds > 0 && D.Pct[p] > D.Pct[1 - p])
             {
-                continue;
+                Out[n++] = Move(K, s);
             }
-        }
-        else if (K == TakeFunds)
-        {
-            if (D.Funds <= 0 || D.Pct[p] <= D.Pct[1 - p])
-            {
-                continue;
-            }
-        }
-        else if (!W.Usable[p][s])
-        {
             continue;
         }
 
-        Out[n++] = Move(K, s);
+        if (Funds > 0 && (K == Poll ? !(Prune && D.Pct[0] == 50 && D.Pct[1] == 50) : W.Usable[p][s] != 0))
+        {
+            Out[n++] = Move(K, s);
+        }
+
+        if (S.SpecialLeft[p][specialIndex(Celebrity)] > 0 && Funds >= specialCost(Celebrity) && !(Prune && D.Mom[p] == 3 && D.Mom[1 - p] == 0))
+        {
+            Out[n++] = Move(Celebrity, s);
+        }
+
+        if (S.SpecialLeft[p][specialIndex(Scandal)] > 0 && Funds >= specialCost(Scandal) && !(Prune && D.Mom[1 - p] == 0))
+        {
+            Out[n++] = Move(Scandal, s);
+        }
+    }
+
+    if (K != TakeFunds && S.SpecialLeft[p][specialIndex(Fundraiser)] > 0)
+    {
+        Out[n++] = Move(Fundraiser);
     }
 
     return n;
+}
+
+static void spend(Sim &S, int p, Kind K)
+{
+    S.Funds[p] -= specialCost(K);
+    S.SpecialLeft[p][specialIndex(K)]--;
 }
 
 void applyMove(Sim &S, int p, const Move &M, bool Correct, int PollRoll)
@@ -123,11 +133,23 @@ void applyMove(Sim &S, int p, const Move &M, bool Correct, int PollRoll)
     case Public:
     case Advert:
         S.Funds[p]--;
-        boost(S.St[M.State], Correct ? p : 1 - p, M.K == Public ? 2 : 1);
+        boost(S.St[M.State], Correct ? p : 1 - p, gainOf(M.K));
         break;
     case TakeFunds:
         S.Funds[p] += S.St[M.State].Funds;
         S.St[M.State].Funds = 0;
+        break;
+    case Celebrity:
+        spend(S, p, Celebrity);
+        boost(S.St[M.State], p, gainOf(Celebrity));
+        break;
+    case Scandal:
+        spend(S, p, Scandal);
+        drain(S.St[M.State], Correct ? 1 - p : p);
+        break;
+    case Fundraiser:
+        spend(S, p, Fundraiser);
+        S.Funds[p] += FundraiserGain;
         break;
     case Pass:
         break;
@@ -189,7 +211,7 @@ void finalizeGame(Sim &S)
 
         if (D.Winner < 0)
         {
-            D.Winner = D.Mom[0] > D.Mom[1] ? 0 : (D.Mom[1] > D.Mom[0] ? 1 : static_cast<int>(Rng() & 1));
+            D.Winner = D.Pct[0] != D.Pct[1] ? (D.Pct[0] > D.Pct[1] ? 0 : 1) : (D.Mom[0] != D.Mom[1] ? (D.Mom[0] > D.Mom[1] ? 0 : 1) : static_cast<int>(Rng() & 1));
             D.Pct[D.Winner] = 100;
             D.Pct[1 - D.Winner] = 0;
         }

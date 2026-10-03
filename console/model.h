@@ -39,6 +39,8 @@ struct Sim
     int16_t Funds[2] = {3, 3};
     int8_t Turn = 0; // completed turns
     int8_t Step = 0; // 0-1 poll, 2-3 public campaign, 4-5 advertisement, (end of turn), 6-7 funding
+    int8_t Offset = 0; // coin toss: decides who acts first in the opening phase
+    int8_t SpecialLeft[2][SpecialKinds] = {{SpecialUses, SpecialUses, SpecialUses}, {SpecialUses, SpecialUses, SpecialUses}};
 };
 
 enum Kind : int8_t
@@ -47,7 +49,10 @@ enum Kind : int8_t
     Poll,
     Public,
     Advert,
-    TakeFunds
+    TakeFunds,
+    Celebrity,
+    Scandal,
+    Fundraiser
 };
 
 struct Move
@@ -60,7 +65,17 @@ struct Move
 };
 
 inline bool terminal(const Sim &S) { return S.Turn >= TotalTurns; }
-inline int moverOf(const Sim &S) { return S.Step & 1; }
+// Who acts first alternates every phase, so neither player always has the last word.
+inline int firstMover(const Sim &S) { return (S.Turn + S.Step / 2 + S.Offset) & 1; }
+inline int moverOf(const Sim &S) { return (S.Step & 1) ^ firstMover(S); }
+inline bool isCampaign(Kind K) { return K == Public || K == Advert; }
+inline bool isSpecial(Kind K) { return K >= Celebrity; }
+inline int specialIndex(Kind K) { return K - Celebrity; }
+inline int specialCost(Kind K) { return K == Celebrity ? 2 : (K == Scandal ? 1 : 0); }
+inline int gainOf(Kind K) { return (K == Public || K == Celebrity) ? 2 : 1; }
+
+// Chance of the favorable outcome of a move, or -1 when the move is certain.
+inline double chanceOf(Kind K, double Accuracy) { return isCampaign(K) ? Accuracy : (K == Scandal ? ScandalChance : -1); }
 inline Kind kindOfStep(int Step)
 {
     static const Kind Phases[4] = {Poll, Public, Advert, TakeFunds};
@@ -95,6 +110,12 @@ inline void boost(StateDyn &D, int Winner, int Gain)
     D.Mom[1 - Winner] = static_cast<int8_t>(max(0, D.Mom[1 - Winner] - Gain));
 }
 
+// The victim of a scandal loses 2 momentum.
+inline void drain(StateDyn &D, int Victim)
+{
+    D.Mom[Victim] = static_cast<int8_t>(max(0, D.Mom[Victim] - 2));
+}
+
 // Legal moves for the player to move. `Prune` drops moves that are pointless for the bot to consider.
 int genMoves(const World &W, const Sim &S, Move *Out, bool Prune);
 
@@ -117,7 +138,8 @@ inline void advanceStep(const World &W, Sim &S)
     }
 }
 
-// Last turn: every state that is still open goes to whoever has more momentum (coin flip on a tie).
+// Last turn: every open state goes to the player leading its polling split, then to the one with more momentum,
+// and finally to a coin flip.
 void finalizeGame(Sim &S);
 
 // Electoral votes held by player p (states not yet decided count for their current leader).

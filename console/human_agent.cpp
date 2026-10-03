@@ -34,8 +34,9 @@ Move HumanAgent::chooseMove(const World &W, const Sim &S, int p, const AnswerSta
 {
     const Kind K = kindOfStep(S.Step);
     Move Legal[MaxMoves];
+    const int Count = genMoves(W, S, Legal, false);
 
-    if (genMoves(W, S, Legal, false) == 1)
+    if (Count == 1)
     {
         cout << W.PlayerName[p] << " has no available action in this phase." << endl;
         return Move();
@@ -43,13 +44,28 @@ Move HumanAgent::chooseMove(const World &W, const Sim &S, int p, const AnswerSta
 
     for (;;)
     {
+        listSpecials(Legal, Count, S, p);
         cout << W.PlayerName[p] << " (Player " << playerWord(p) << ") Turn" << endl;
-        const int Pick = readInt(promptFor(K), 0, NumStates) - 1;
+        const int Input = readInt(promptFor(K), 0, NumStates + SpecialKinds);
 
-        if (Pick < 0)
+        if (Input == 0)
         {
             return Move();
         }
+
+        if (Input > NumStates)
+        {
+            const Move Special = askSpecial(Legal, Count, static_cast<Kind>(Celebrity + Input - NumStates - 1));
+
+            if (Special.K != Pass)
+            {
+                return Special;
+            }
+
+            continue;
+        }
+
+        const int Pick = Input - 1;
 
         const string Why = whyNot(W, S, p, K, Pick);
 
@@ -97,6 +113,78 @@ bool HumanAgent::answer(const string &Issue, const Qnos &Q)
     }
 
     return false;
+}
+
+static const char *SpecialNames[SpecialKinds] = {"Celebrity endorsement - 2 funds, certain +2 momentum", "Scandal leak - 1 fund, 60% to drain 2 of the rival momentum, otherwise you lose 2", "Fundraiser - no cost, +2 funds"};
+
+static bool offered(const Move *Legal, int Count, Kind K)
+{
+    for (int i = 0; i < Count; i++)
+    {
+        if (Legal[i].K == K)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void HumanAgent::listSpecials(const Move *Legal, int Count, const Sim &S, int p)
+{
+    bool Any = false;
+
+    for (int k = 0; k < SpecialKinds; k++)
+    {
+        const Kind K = static_cast<Kind>(Celebrity + k);
+
+        if (!offered(Legal, Count, K))
+        {
+            continue;
+        }
+
+        if (!Any)
+        {
+            cout << "Special actions (they replace your action in this phase) :" << endl;
+            Any = true;
+        }
+
+        cout << NumStates + k + 1 << ") " << SpecialNames[k] << " [" << static_cast<int>(S.SpecialLeft[p][k]) << " left]" << endl;
+    }
+}
+
+Move HumanAgent::askSpecial(const Move *Legal, int Count, Kind Special)
+{
+    if (!offered(Legal, Count, Special))
+    {
+        cout << "That special action is not available (no uses left, or not enough funds)." << endl;
+        return Move();
+    }
+
+    if (Special == Fundraiser)
+    {
+        return Move(Fundraiser);
+    }
+
+    for (;;)
+    {
+        const int Pick = readInt("Select State for it (0 to go back) : ", 0, NumStates) - 1;
+
+        if (Pick < 0)
+        {
+            return Move();
+        }
+
+        for (int i = 0; i < Count; i++)
+        {
+            if (Legal[i].K == Special && Legal[i].State == Pick)
+            {
+                return Legal[i];
+            }
+        }
+
+        cout << "That state is not available for this action." << endl;
+    }
 }
 
 const char *HumanAgent::promptFor(Kind K)
