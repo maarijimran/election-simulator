@@ -2,7 +2,7 @@
 
 A two-player election strategy game played on an interactive map of the United States. Poll, campaign and advertise across 50 states, answer issue questions to build momentum, and win more of the 536 electoral votes than your rival. Play head to head, or against a bot that searches the game tree with expectiminimax and adapts to how you answer.
 
-**Live demo:** _added after the first deployment_
+**Live demo:** [election-simulator-iota.vercel.app](https://election-simulator-iota.vercel.app)
 
 ![Game board](docs/game.png)
 

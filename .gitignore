@@ -5,3 +5,6 @@ dist
 *.log
 Project.original.cpp
 .DS_Store
+
+.vercel
+.env*
