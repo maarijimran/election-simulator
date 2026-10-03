@@ -3,6 +3,7 @@ import {
   type Sim,
   advanceStep,
   applyMove,
+  chanceOf,
   genMoves,
   isTerminal,
   moverOf,
@@ -12,7 +13,8 @@ import { type Move, type Player, type World, TOTAL_TURNS } from './types'
 
 // Expectiminimax with alpha-beta pruning, iterative deepening and a time budget.
 //  - The bot maximizes, the opponent minimizes.
-//  - Campaign answers are chance nodes: the bot uses its own accuracy, the opponent a learned estimate.
+//  - Campaign answers and scandal leaks are chance nodes: the bot uses its own quiz accuracy, the opponent a
+//    learned estimate, and scandals a fixed odds.
 //  - Polls are searched as their expected outcome (an even split).
 //  - Moves are ordered by moveGain() and only the best few are searched below the root.
 //  - Forced moves (only "pass" available) do not consume depth.
@@ -47,11 +49,12 @@ export class Searcher {
   ) {}
 
   static beamWidth(ply: number): number {
-    return ply === 0 ? Infinity : ply === 1 ? 10 : ply === 2 ? 7 : 5
+    return ply === 0 ? 40 : ply === 1 ? 10 : ply === 2 ? 7 : 5
   }
 
   think(S: Sim, maxDepth: number, timeMs: number): SearchResult {
     const list = this.rank(S)
+    list.length = Math.min(list.length, Searcher.beamWidth(0))
     const p = moverOf(S)
     const start = performance.now()
     const result: SearchResult = { best: list[0].move, depth: 0, nodes: 0, value: 0, ms: 0 }
@@ -152,13 +155,13 @@ export class Searcher {
     return this.search(next, depth, ply + 1, alpha, beta)
   }
 
-  // Value of a move: a plain child for deterministic moves, a chance node (quiz answer) for campaigns.
+  // Value of a move: a plain child for deterministic moves, a chance node (quiz answer or scandal) otherwise.
   // The chance node uses Star1 pruning: each outcome gets a window that assumes the other outcome
   // is as good or as bad as the value bounds allow.
   private valueMove(S: Sim, p: Player, m: Move, depth: number, ply: number, alpha: number, beta: number): number {
-    if (m.kind !== 'public' && m.kind !== 'advert') return this.child(S, p, m, true, depth, ply, alpha, beta)
+    const w0 = chanceOf(m.kind, p === this.me ? this.pMe : this.pOpp)
+    if (w0 === null) return this.child(S, p, m, true, depth, ply, alpha, beta)
 
-    const w0 = p === this.me ? this.pMe : this.pOpp
     const w1 = 1 - w0
     const a0 = (alpha - w1 * VALUE_BOUND) / w0
     const b0 = (beta + w1 * VALUE_BOUND) / w0

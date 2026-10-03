@@ -7,6 +7,7 @@ import {
   type Sim,
   advanceStep,
   applyMove,
+  chanceOutcome,
   createSim,
   createWorld,
   finalizeGame,
@@ -16,7 +17,7 @@ import {
   tally,
   winnerOfGame,
 } from './sim'
-import { type Move, type Player, type World, other } from './types'
+import { type Move, type Player, type World, isCampaign, other } from './types'
 
 // Games without a UI, used by the tests and the benchmark script.
 export interface Agent {
@@ -43,6 +44,7 @@ export const searchAgent = (level: Level): Agent => ({
 })
 
 export interface GameOutcome {
+  starter: Player
   sim: Sim
   winner: Player
   margin: number // Player One minus Player Two, in electoral votes
@@ -53,14 +55,14 @@ export function playHeadless(agents: [Agent, Agent], rng: Rng): GameOutcome {
   const world = createWorld([first, randomParty(rng, first)], rng)
   const sim = createSim(rng)
   const records = [emptyRecord(), emptyRecord()]
+  const starter = moverOf(sim)
 
   while (!isTerminal(sim)) {
     const p = moverOf(sim)
     const move = agents[p].choose(world, sim, p, estimateAccuracy(records[other(p)]), rng)
-    const campaign = move.kind === 'public' || move.kind === 'advert'
-    const correct = campaign ? rng.chance(agents[p].accuracy) : true
+    const correct = chanceOutcome(move.kind, agents[p].accuracy, rng)
 
-    if (campaign) {
+    if (isCampaign(move.kind)) {
       records[p].total++
       if (correct) records[p].correct++
     }
@@ -70,5 +72,5 @@ export function playHeadless(agents: [Agent, Agent], rng: Rng): GameOutcome {
   }
 
   finalizeGame(sim, rng)
-  return { sim, winner: winnerOfGame(sim), margin: tally(sim, 0) - tally(sim, 1) }
+  return { starter, sim, winner: winnerOfGame(sim), margin: tally(sim, 0) - tally(sim, 1) }
 }

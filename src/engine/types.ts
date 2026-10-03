@@ -6,7 +6,9 @@ export const STEPS_PER_TURN = 8
 export const SLOTS = PARTY_SIZE * 2
 
 export type Player = 0 | 1
-export type Kind = 'pass' | 'poll' | 'public' | 'advert' | 'funds'
+export type PhaseKind = 'poll' | 'public' | 'advert' | 'funds'
+export type SpecialKind = 'celebrity' | 'scandal' | 'fundraiser'
+export type Kind = 'pass' | PhaseKind | SpecialKind
 
 export interface Move {
   kind: Kind
@@ -26,3 +28,13 @@ export interface World {
 }
 
 export const other = (p: Player): Player => (p === 0 ? 1 : 0)
+
+// Special actions replace a player's normal action in the poll, campaign and advertising phases.
+export const SPECIALS: SpecialKind[] = ['celebrity', 'scandal', 'fundraiser']
+export const SPECIAL_USES = 2
+export const SPECIAL_COST: Record<SpecialKind, number> = { celebrity: 2, scandal: 1, fundraiser: 0 }
+export const SCANDAL_CHANCE = 0.6
+export const FUNDRAISER_GAIN = 2
+
+export const isSpecial = (kind: Kind): kind is SpecialKind => kind === 'celebrity' || kind === 'scandal' || kind === 'fundraiser'
+export const isCampaign = (kind: Kind) => kind === 'public' || kind === 'advert'

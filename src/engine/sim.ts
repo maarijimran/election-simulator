@@ -3,15 +3,23 @@ import type { Rng } from './rng'
 import {
   type Kind,
   type Move,
+  type PhaseKind,
   type Player,
+  type SpecialKind,
   type World,
+  FUNDRAISER_GAIN,
   NUM_ISSUES,
   NUM_STATES,
   PARTY_SIZE,
   PASS,
+  SCANDAL_CHANCE,
   SLOTS,
+  SPECIALS,
+  SPECIAL_COST,
+  SPECIAL_USES,
   STEPS_PER_TURN,
   TOTAL_TURNS,
+  isCampaign,
   move,
   other,
 } from './types'
@@ -27,7 +35,9 @@ const WINNER = LEADER + NUM_STATES
 const PLAYER_FUNDS = WINNER + NUM_STATES
 const TURN = PLAYER_FUNDS + 2
 const STEP = TURN + 1
-const SIZE = STEP + 1
+const OFFSET = STEP + 1
+const SPECIAL_LEFT = OFFSET + 1
+const SIZE = SPECIAL_LEFT + 2 * SPECIALS.length
 
 export const pct = (S: Sim, s: number, p: number) => S[PCT + s * 2 + p]
 export const mom = (S: Sim, s: number, p: number) => S[MOM + s * 2 + p]
@@ -37,13 +47,17 @@ export const winnerOf = (S: Sim, s: number) => S[WINNER + s]
 export const playerFunds = (S: Sim, p: number) => S[PLAYER_FUNDS + p]
 export const turnOf = (S: Sim) => S[TURN]
 export const stepOf = (S: Sim) => S[STEP]
+export const specialsLeft = (S: Sim, p: number, kind: SpecialKind) => S[SPECIAL_LEFT + p * SPECIALS.length + SPECIALS.indexOf(kind)]
 
 export const isTerminal = (S: Sim) => S[TURN] >= TOTAL_TURNS
-export const moverOf = (S: Sim): Player => (S[STEP] & 1) as Player
 
-const PHASES: Kind[] = ['poll', 'public', 'advert', 'funds']
-export const kindOfStep = (step: number): Kind => PHASES[step >> 1]
-export const currentKind = (S: Sim): Kind => kindOfStep(S[STEP])
+// Who acts first alternates every phase; a coin toss at the start of the game decides the opening order.
+export const firstMover = (S: Sim): Player => ((S[TURN] + (S[STEP] >> 1) + S[OFFSET]) & 1) as Player
+export const moverOf = (S: Sim): Player => ((S[STEP] & 1) ^ firstMover(S)) as Player
+
+const PHASES: PhaseKind[] = ['poll', 'public', 'advert', 'funds']
+export const kindOfStep = (step: number): PhaseKind => PHASES[step >> 1]
+export const currentKind = (S: Sim): PhaseKind => kindOfStep(S[STEP])
 
 export function createSim(rng: Rng): Sim {
   const S = new Int16Array(SIZE)
@@ -62,6 +76,8 @@ export function createSim(rng: Rng): Sim {
 
   S[PLAYER_FUNDS] = 3
   S[PLAYER_FUNDS + 1] = 3
+  S[OFFSET] = rng.int(2)
+  S.fill(SPECIAL_USES, SPECIAL_LEFT, SIZE)
   return S
 }
 
@@ -117,31 +133,67 @@ export function boostedMomentum(m0: number, m1: number, winner: number, gain: nu
     : [Math.max(0, m0 - gain), Math.min(3, m1 + gain)]
 }
 
-export const gainOf = (kind: Kind) => (kind === 'public' ? 2 : 1)
+// Momentum after a scandal: the player who loses momentum drops by 2 and the other is untouched.
+export function drainedMomentum(m0: number, m1: number, victim: number): [number, number] {
+  return victim === 0 ? [Math.max(0, m0 - 2), m1] : [m0, Math.max(0, m1 - 2)]
+}
+
+export const gainOf = (kind: Kind) => (kind === 'public' || kind === 'celebrity' ? 2 : 1)
+
+// Chance of the favorable outcome of a move, or null when the move is certain.
+export function chanceOf(kind: Kind, accuracy: number): number | null {
+  if (isCampaign(kind)) return accuracy
+  return kind === 'scandal' ? SCANDAL_CHANCE : null
+}
+
+export function chanceOutcome(kind: Kind, accuracy: number, rng: Rng): boolean {
+  const p = chanceOf(kind, accuracy)
+  return p === null ? true : rng.chance(p)
+}
 
 // Legal moves for the player to move. `prune` drops moves that are pointless for the bot to consider.
 export function genMoves(world: World, S: Sim, prune: boolean): Move[] {
   const p = moverOf(S)
+  const q = other(p)
   const kind = currentKind(S)
+  const funds = S[PLAYER_FUNDS + p]
   const moves: Move[] = [PASS]
-
-  if (kind !== 'funds' && S[PLAYER_FUNDS + p] <= 0) return moves
 
   for (let s = 0; s < NUM_STATES; s++) {
     if (S[WINNER + s] >= 0) continue
 
-    if (kind === 'poll') {
-      if (prune && S[PCT + s * 2] === 50 && S[PCT + s * 2 + 1] === 50) continue
-    } else if (kind === 'funds') {
-      if (S[FUNDS + s] <= 0 || S[PCT + s * 2 + p] <= S[PCT + s * 2 + 1 - p]) continue
-    } else if (!usableMask(world, p, s)) {
+    if (kind === 'funds') {
+      if (S[FUNDS + s] > 0 && S[PCT + s * 2 + p] > S[PCT + s * 2 + q]) moves.push(move(kind, s))
       continue
     }
 
-    moves.push(move(kind, s))
+    if (funds > 0) {
+      if (kind === 'poll') {
+        if (!prune || S[PCT + s * 2] !== 50 || S[PCT + s * 2 + 1] !== 50) moves.push(move(kind, s))
+      } else if (usableMask(world, p, s)) {
+        moves.push(move(kind, s))
+      }
+    }
+
+    const mine = S[MOM + s * 2 + p]
+    const theirs = S[MOM + s * 2 + q]
+
+    if (specialsLeft(S, p, 'celebrity') > 0 && funds >= SPECIAL_COST.celebrity && !(prune && mine === 3 && theirs === 0)) {
+      moves.push(move('celebrity', s))
+    }
+    if (specialsLeft(S, p, 'scandal') > 0 && funds >= SPECIAL_COST.scandal && !(prune && theirs === 0)) {
+      moves.push(move('scandal', s))
+    }
   }
 
+  if (kind !== 'funds' && specialsLeft(S, p, 'fundraiser') > 0) moves.push(move('fundraiser', -1))
+
   return moves
+}
+
+function spend(S: Sim, p: Player, kind: SpecialKind): void {
+  S[PLAYER_FUNDS + p] -= SPECIAL_COST[kind]
+  S[SPECIAL_LEFT + p * SPECIALS.length + SPECIALS.indexOf(kind)]--
 }
 
 export function applyMove(S: Sim, p: Player, m: Move, correct: boolean, pollRoll: number): void {
@@ -164,6 +216,24 @@ export function applyMove(S: Sim, p: Player, m: Move, correct: boolean, pollRoll
     case 'funds':
       S[PLAYER_FUNDS + p] += S[FUNDS + s]
       S[FUNDS + s] = 0
+      break
+    case 'celebrity': {
+      spend(S, p, 'celebrity')
+      const [a, b] = boostedMomentum(S[MOM + s * 2], S[MOM + s * 2 + 1], p, gainOf('celebrity'))
+      S[MOM + s * 2] = a
+      S[MOM + s * 2 + 1] = b
+      break
+    }
+    case 'scandal': {
+      spend(S, p, 'scandal')
+      const [a, b] = drainedMomentum(S[MOM + s * 2], S[MOM + s * 2 + 1], correct ? other(p) : p)
+      S[MOM + s * 2] = a
+      S[MOM + s * 2 + 1] = b
+      break
+    }
+    case 'fundraiser':
+      spend(S, p, 'fundraiser')
+      S[PLAYER_FUNDS + p] += FUNDRAISER_GAIN
       break
     case 'pass':
       break
@@ -207,14 +277,18 @@ export function advanceStep(S: Sim): void {
   }
 }
 
-// Last turn: every open state goes to the player with more momentum, with a coin flip on a tie.
+// Last turn: every open state goes to the player leading its polling split, then to the player with
+// more momentum, and finally to a coin flip.
 export function finalizeGame(S: Sim, rng: Rng): void {
   for (let s = 0; s < NUM_STATES; s++) {
     if (S[WINNER + s] >= 0) continue
 
+    const p0 = S[PCT + s * 2]
+    const p1 = S[PCT + s * 2 + 1]
     const m0 = S[MOM + s * 2]
     const m1 = S[MOM + s * 2 + 1]
-    const winner = m0 > m1 ? 0 : m1 > m0 ? 1 : rng.int(2)
+    const winner = p0 !== p1 ? (p0 > p1 ? 0 : 1) : m0 !== m1 ? (m0 > m1 ? 0 : 1) : rng.int(2)
+
     S[WINNER + s] = winner
     S[PCT + s * 2 + winner] = 100
     S[PCT + s * 2 + 1 - winner] = 0

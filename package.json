@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "benchmark": "tsx scripts/benchmark.ts"
+    "benchmark": "tsx scripts/benchmark.ts",
+    "fairness": "tsx scripts/fairness.ts"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",
