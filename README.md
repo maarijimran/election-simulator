@@ -81,17 +81,18 @@ src/
   game/          Game session: turn loop, quizzes, bot scheduling
   components/    React components
   map/           Projected US state geometry
-console/         Original C++ console version of the game
+console/         C++ console version of the game, split into modules
 scripts/         Benchmark script
 ```
 
 ## Console edition
 
-The original single-file C++ version lives in [`console/Project.cpp`](console/Project.cpp) and uses the same search approach.
+The original C++ version lives in [`console/`](console), split into small modules: game model and rules (`model`), evaluation (`evaluate`), search (`search`), agents (`human_agent`, `bot_agents`), the console flow (`game`, `console_io`) and the data tables (`issues`, `states`). It uses the same search approach.
 
 ```bash
-g++ -std=c++14 -O2 console/Project.cpp -o election-simulator
+g++ -std=c++14 -O2 console/*.cpp -o election-simulator
 ./election-simulator
+./election-simulator --benchmark 20 100   # games, milliseconds per move
 ```
 
 ## Notes
