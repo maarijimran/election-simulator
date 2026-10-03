@@ -1,4 +1,4 @@
-import type { Kind } from '../engine/types'
+import type { PhaseKind } from '../engine/types'
 
 export interface PhaseInfo {
   title: string
@@ -6,9 +6,9 @@ export interface PhaseInfo {
   hint: string
 }
 
-export const PHASES: Exclude<Kind, 'pass'>[] = ['poll', 'public', 'advert', 'funds']
+export const PHASES: PhaseKind[] = ['poll', 'public', 'advert', 'funds']
 
-export const PHASE_INFO: Record<Exclude<Kind, 'pass'>, PhaseInfo> = {
+export const PHASE_INFO: Record<PhaseKind, PhaseInfo> = {
   poll: {
     title: 'Polling',
     short: 'Poll',

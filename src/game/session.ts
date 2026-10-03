@@ -8,26 +8,46 @@ import {
   type Sim,
   advanceStep,
   applyMove,
+  chanceOutcome,
   createSim,
   createWorld,
   currentKind,
   finalizeGame,
+  firstMover,
   gainOf,
   genMoves,
   isTerminal,
   issueOfSlot,
   moverOf,
+  specialsLeft,
   stateFunds,
   stepOf,
   turnOf,
   usableMask,
   winnerOfGame,
 } from '../engine/sim'
-import { type Kind, type Move, type Player, type World, NUM_STATES, PARTY_SIZE, PASS, TOTAL_TURNS, move, other } from '../engine/types'
+import {
+  type Move,
+  type PhaseKind,
+  type Player,
+  type SpecialKind,
+  type World,
+  FUNDRAISER_GAIN,
+  NUM_STATES,
+  PARTY_SIZE,
+  PASS,
+  SPECIALS,
+  TOTAL_TURNS,
+  isCampaign,
+  isSpecial,
+  move,
+  other,
+} from '../engine/types'
 
 export interface PlayerConfig {
   name: string
   party: string
+  avatar: number
   kind: 'human' | 'bot'
   level?: Level
 }
@@ -39,7 +59,7 @@ export interface GameConfig {
 
 export interface LogEntry {
   id: number
-  player: Player | null // null marks a turn separator
+  player: Player | null // null marks a separator
   text: string
   tone: 'neutral' | 'good' | 'bad'
 }
@@ -63,17 +83,22 @@ export interface BotInfo {
   outlook: number
 }
 
+export type SpecialUses = Record<SpecialKind, number>
+
 export interface Snapshot {
   sim: Sim
   world: World
   config: GameConfig
   mover: Player
-  kind: Kind
+  first: Player // who acts first in the current phase
+  kind: PhaseKind
   turn: number
   over: boolean
   winner: Player | null
   awaiting: 'human' | 'bot' | 'idle'
-  legal: boolean[] // states the human to move can act on
+  legal: boolean[] // states the human to move can act on with the phase action
+  special: { celebrity: boolean[]; scandal: boolean[]; fundraiser: boolean }
+  specials: [SpecialUses, SpecialUses]
   quiz: QuizView | null
   log: LogEntry[]
   botInfo: BotInfo | null
@@ -91,6 +116,9 @@ const BOT_PACE_MS = 800
 const AUTO_PASS_MS = 900
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+const usesOf = (S: Sim, p: Player): SpecialUses =>
+  Object.fromEntries(SPECIALS.map((kind) => [kind, specialsLeft(S, p, kind)])) as SpecialUses
 
 export class GameSession {
   readonly world: World
@@ -154,6 +182,10 @@ export class GameSession {
     if (this.isLegal('funds', state)) this.submit({ move: move('funds', state), correct: true })
   }
 
+  special(kind: SpecialKind, state = -1): void {
+    if (this.isLegal(kind, state)) this.submit({ move: move(kind, state), correct: chanceOutcome(kind, 0, this.rng) })
+  }
+
   beginCampaign(state: number, slot: number): void {
     const kind = currentKind(this.sim)
     if (this.awaiting !== 'human' || this.quiz || (kind !== 'public' && kind !== 'advert')) return
@@ -198,11 +230,10 @@ export class GameSession {
     this.emit()
   }
 
-  private isLegal(kind: Kind, state: number): boolean {
+  private isLegal(kind: Move['kind'], state: number): boolean {
     return (
       this.awaiting === 'human' &&
       !this.quiz &&
-      currentKind(this.sim) === kind &&
       genMoves(this.world, this.sim, false).some((m) => m.kind === kind && m.state === state)
     )
   }
@@ -268,15 +299,18 @@ export class GameSession {
     await delay(Math.max(0, BOT_PACE_MS - (performance.now() - started)))
     if (this.disposed) return
 
-    const campaign = result.move.kind === 'public' || result.move.kind === 'advert'
     this.botInfo = { player: p, depth: result.depth, nodes: result.nodes, ms: result.ms, outlook: result.outlook }
     this.awaiting = 'idle'
-    this.commit(p, result.move, campaign ? this.rng.chance(level.accuracy) : true)
+    this.commit(p, result.move, chanceOutcome(result.move.kind, level.accuracy, this.rng))
   }
 
   private announceTurn(): void {
     if (stepOf(this.sim) !== 0 || this.announcedTurn === turnOf(this.sim)) return
     this.announcedTurn = turnOf(this.sim)
+
+    if (this.announcedTurn === 0) {
+      this.addLog(null, `Coin toss: ${this.config.players[firstMover(this.sim)].name} acts first`, 'neutral')
+    }
     this.addLog(null, `Turn ${turnOf(this.sim) + 1}`, 'neutral')
   }
 
@@ -287,9 +321,8 @@ export class GameSession {
     const roll = 49 + this.rng.int(3)
     const state = m.state >= 0 ? STATES[m.state].name : ''
     const held = m.kind === 'funds' ? stateFunds(next, m.state) : 0
-    const campaign = m.kind === 'public' || m.kind === 'advert'
 
-    if (campaign) {
+    if (isCampaign(m.kind)) {
       this.records[p] = { correct: this.records[p].correct + (correct ? 1 : 0), total: this.records[p].total + 1 }
     }
 
@@ -298,32 +331,50 @@ export class GameSession {
     this.sim = next
     this.lastAction = m.state >= 0 ? { state: m.state, player: p, seq: ++this.actionSeq } : null
 
-    if (record) {
-      const issue = campaign ? ISSUES[issueOfSlot(this.world, m.state, m.slot)].name : ''
-      const gain = gainOf(m.kind)
+    if (record) this.logMove(p, m, correct, { name, rival, state, roll, held })
+    this.emit()
+  }
 
-      switch (m.kind) {
-        case 'pass':
-          this.addLog(p, `${name} passed`, 'neutral')
-          break
-        case 'poll':
-          this.addLog(p, `${name} polled ${state}: ${roll}% to ${100 - roll}%`, 'neutral')
-          break
-        case 'funds':
-          this.addLog(p, `${name} collected ${held} fund${held === 1 ? '' : 's'} from ${state}`, 'neutral')
-          break
-        default:
-          this.addLog(
-            p,
-            correct
-              ? `${name} ${m.kind === 'public' ? 'campaigned' : 'advertised'} in ${state} on ${issue}: correct, +${gain} momentum`
-              : `${name} missed the ${issue} question in ${state}: ${rival} gains +${gain} momentum`,
-            correct ? 'good' : 'bad',
-          )
+  private logMove(p: Player, m: Move, correct: boolean, t: { name: string; rival: string; state: string; roll: number; held: number }): void {
+    const { name, rival, state } = t
+    const gain = gainOf(m.kind)
+
+    switch (m.kind) {
+      case 'pass':
+        this.addLog(p, `${name} passed`, 'neutral')
+        break
+      case 'poll':
+        this.addLog(p, `${name} polled ${state}: ${t.roll}% to ${100 - t.roll}%`, 'neutral')
+        break
+      case 'funds':
+        this.addLog(p, `${name} collected ${t.held} fund${t.held === 1 ? '' : 's'} from ${state}`, 'neutral')
+        break
+      case 'celebrity':
+        this.addLog(p, `${name} landed a celebrity endorsement in ${state}: +${gain} momentum`, 'good')
+        break
+      case 'scandal':
+        this.addLog(
+          p,
+          correct
+            ? `${name} leaked a scandal in ${state}: ${rival} loses 2 momentum`
+            : `${name}'s scandal in ${state} backfired: ${name} loses 2 momentum`,
+          correct ? 'good' : 'bad',
+        )
+        break
+      case 'fundraiser':
+        this.addLog(p, `${name} held a fundraiser: +${FUNDRAISER_GAIN} funds`, 'good')
+        break
+      default: {
+        const issue = ISSUES[issueOfSlot(this.world, m.state, m.slot)].name
+        this.addLog(
+          p,
+          correct
+            ? `${name} ${m.kind === 'public' ? 'campaigned' : 'advertised'} in ${state} on ${issue}: correct, +${gain} momentum`
+            : `${name} missed the ${issue} question in ${state}: ${rival} gains +${gain} momentum`,
+          correct ? 'good' : 'bad',
+        )
       }
     }
-
-    this.emit()
   }
 
   private finish(): void {
@@ -343,11 +394,23 @@ export class GameSession {
 
   private emit(): void {
     const S = this.sim
-    const human = this.awaiting === 'human'
+    const human = this.awaiting === 'human' && !this.quiz
     const legal = new Array<boolean>(NUM_STATES).fill(false)
+    const special = {
+      celebrity: new Array<boolean>(NUM_STATES).fill(false),
+      scandal: new Array<boolean>(NUM_STATES).fill(false),
+      fundraiser: false,
+    }
 
-    if (human && !this.quiz) {
-      for (const m of genMoves(this.world, S, false)) if (m.state >= 0) legal[m.state] = true
+    if (human) {
+      for (const m of genMoves(this.world, S, false)) {
+        if (isSpecial(m.kind)) {
+          if (m.kind === 'fundraiser') special.fundraiser = true
+          else special[m.kind][m.state] = true
+        } else if (m.state >= 0) {
+          legal[m.state] = true
+        }
+      }
     }
 
     this.snapshot = {
@@ -355,12 +418,15 @@ export class GameSession {
       world: this.world,
       config: this.config,
       mover: moverOf(S),
+      first: firstMover(S),
       kind: currentKind(S),
       turn: Math.min(turnOf(S) + 1, TOTAL_TURNS),
       over: this.over,
       winner: this.over ? winnerOfGame(S) : null,
       awaiting: this.awaiting,
       legal,
+      special,
+      specials: [usesOf(S, 0), usesOf(S, 1)],
       quiz: this.quiz,
       log: this.log,
       botInfo: this.botInfo,

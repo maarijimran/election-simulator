@@ -1,6 +1,8 @@
-import { TOTAL_TURNS } from '../engine/types'
+import { FUNDRAISER_GAIN, SPECIAL_USES, TOTAL_TURNS } from '../engine/types'
 import { PHASES, PHASE_INFO } from '../game/phases'
 import type { GameSession, Snapshot } from '../game/session'
+import Avatar from './Avatar'
+import Icon from './Icons'
 
 interface Props {
   snap: Snapshot
@@ -8,15 +10,17 @@ interface Props {
 }
 
 export default function TurnBar({ snap, session }: Props) {
-  const mover = snap.config.players[snap.mover]
-  const info = snap.kind === 'pass' ? PHASE_INFO.poll : PHASE_INFO[snap.kind]
+  const { players } = snap.config
+  const mover = players[snap.mover]
+  const info = PHASE_INFO[snap.kind]
   const human = snap.awaiting === 'human'
   const bot = snap.botInfo
+  const left = snap.specials[snap.mover].fundraiser
 
   return (
-    <section className="card turn-bar" aria-live="polite">
-      <div className="turn-head">
-        <span className="turn-count">
+    <section className="panel turn-bar" aria-live="polite">
+      <header className="panel-head">
+        <span>
           Turn {snap.turn} <small>of {TOTAL_TURNS}</small>
         </span>
         <ol className="steps">
@@ -26,45 +30,59 @@ export default function TurnBar({ snap, session }: Props) {
             </li>
           ))}
         </ol>
-      </div>
+      </header>
 
-      {snap.over ? (
-        <p className="turn-title">Game over</p>
-      ) : (
-        <>
-          <p className={`turn-title p${snap.mover}`}>
-            <i className={`dot p${snap.mover}`} />
-            {mover.name}: {info.title.toLowerCase()}
+      <div className="panel-body">
+        {snap.over ? (
+          <p className="turn-title">Game over</p>
+        ) : (
+          <>
+            <p className={`turn-title p${snap.mover}`}>
+              <Avatar index={mover.avatar} size={30} />
+              <span>
+                {mover.name}
+                <small>{info.title}</small>
+              </span>
+            </p>
+            <p className="muted small">{info.hint}</p>
+            <p className="muted small">{players[snap.first].name} acts first in this phase.</p>
+          </>
+        )}
+
+        {snap.notice && <p className="notice">{snap.notice}</p>}
+
+        {snap.awaiting === 'bot' && (
+          <p className="thinking">
+            <span className="spinner" aria-hidden /> {mover.name} is thinking
           </p>
-          <p className="muted">{info.hint}</p>
-        </>
-      )}
+        )}
 
-      {snap.notice && <p className="notice">{snap.notice}</p>}
+        {human && (
+          <div className="turn-actions">
+            <button className="btn" onClick={() => session.pass()}>
+              {snap.kind === 'funds' ? 'Skip funding' : 'Pass'}
+            </button>
+            {snap.kind !== 'funds' && (
+              <button
+                className="btn special"
+                disabled={!snap.special.fundraiser}
+                onClick={() => session.special('fundraiser')}
+                title={`Replace this action with a fundraiser: +${FUNDRAISER_GAIN} funds (${left} of ${SPECIAL_USES} left)`}
+              >
+                <Icon name="fundraiser" />
+                Fundraiser +{FUNDRAISER_GAIN}
+              </button>
+            )}
+          </div>
+        )}
 
-      {snap.awaiting === 'bot' && (
-        <p className="thinking">
-          <span className="spinner" aria-hidden /> {mover.name} is thinking
-        </p>
-      )}
-
-      {human && (
-        <div className="turn-actions">
-          <button className="btn" onClick={() => session.pass()}>
-            {snap.kind === 'funds' ? 'Skip funding' : 'Pass'}
-          </button>
-          <span className="muted small">
-            {snap.kind === 'public' || snap.kind === 'advert' ? 'Select a state, then pick an issue.' : 'Select a state on the map.'}
-          </span>
-        </div>
-      )}
-
-      {bot && !snap.over && (
-        <p className="bot-info">
-          {snap.config.players[bot.player].name}: searched {bot.depth} plies, {bot.nodes.toLocaleString()} nodes in{' '}
-          {(bot.ms / 1000).toFixed(1)}s. Outlook {bot.outlook}%.
-        </p>
-      )}
+        {bot && !snap.over && (
+          <p className="bot-info">
+            {players[bot.player].name}: searched {bot.depth} plies, {bot.nodes.toLocaleString()} nodes in {(bot.ms / 1000).toFixed(1)}s.
+            Outlook {bot.outlook}%.
+          </p>
+        )}
+      </div>
     </section>
   )
 }

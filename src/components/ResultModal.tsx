@@ -1,6 +1,7 @@
 import { TOTAL_VOTES } from '../engine/data/states'
 import { tally } from '../engine/sim'
 import type { Snapshot } from '../game/session'
+import Avatar from './Avatar'
 
 interface Props {
   snap: Snapshot
@@ -20,10 +21,15 @@ export default function ResultModal({ snap, onClose, onRestart }: Props) {
   return (
     <div className="overlay" role="presentation">
       <div className="modal result" role="dialog" aria-modal="true" aria-labelledby="result-title">
-        <p className="eyebrow">Final result</p>
-        <h2 id="result-title" className={`p${winner}`}>
-          {snap.config.players[winner].name} wins
-        </h2>
+        <div className="winner">
+          <Avatar index={snap.config.players[winner].avatar} size={84} />
+          <div>
+            <p className="eyebrow">Final result</p>
+            <h2 id="result-title" className={`p${winner}`}>
+              {snap.config.players[winner].name} wins
+            </h2>
+          </div>
+        </div>
         <p className="muted">{tie ? 'Tied on electoral votes; the tiebreak goes to Player Two.' : `${ev[winner]} of ${TOTAL_VOTES} electoral votes.`}</p>
 
         <div className="final-score">

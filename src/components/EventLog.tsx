@@ -10,8 +10,8 @@ export default function EventLog({ log }: { log: LogEntry[] }) {
   }, [log.length])
 
   return (
-    <section className="card log">
-      <h3>Activity</h3>
+    <section className="panel log">
+      <header className="panel-head">Activity</header>
       <ul ref={list}>
         {log.map((entry) => (
           <li key={entry.id} className={entry.player === null ? 'separator' : `${entry.tone} p${entry.player}`}>
