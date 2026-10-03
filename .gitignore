@@ -1,0 +1,7 @@
+node_modules
+dist
+.vercel
+*.exe
+*.log
+Project.original.cpp
+.DS_Store
